@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>bio-cpu | a computer modelled on gene regulation</title>
+<style>
+  :root { --ink:#1b1b1b; --dim:#777; --line:#d4d4d4; --bg:#fafaf8; --hot:#e8590c; }
+  * { box-sizing:border-box; }
+  body { margin:0; font:14px/1.45 ui-monospace, Menlo, Consolas, monospace; color:var(--ink); background:var(--bg); }
+  header { padding:14px 20px; border-bottom:1px solid var(--line); }
+  header h1 { font-size:16px; margin:0 0 2px; }
+  header p { margin:0; color:var(--dim); max-width:900px; }
+  main { display:grid; grid-template-columns: minmax(300px, 1fr) minmax(420px, 1.5fr); gap:20px; padding:20px; }
+  @media (max-width: 960px) { main { grid-template-columns: 1fr; } }
+  section { background:#fff; border:1px solid var(--line); padding:12px; }
+  h2 { font-size:12px; text-transform:uppercase; letter-spacing:.08em; color:var(--dim); margin:0 0 8px; font-weight:600; }
+  textarea { width:100%; height:330px; font:13px/1.5 inherit; border:1px solid var(--line); padding:8px; resize:vertical; }
+  .row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin:8px 0; }
+  button, select, input[type=number] { font:inherit; border:1px solid var(--ink); background:#fff; padding:5px 10px; }
+  button { cursor:pointer; }
+  button:hover { background:var(--ink); color:#fff; }
+  input[type=number] { width:80px; }
+  #msg { min-height:1.4em; color:var(--dim); }
+  #msg.err { color:var(--hot); }
+  canvas { width:100%; height:auto; display:block; }
+  #legend span { margin-right:14px; font-size:12px; white-space:nowrap; }
+  #legend i { display:inline-block; width:12px; height:3px; vertical-align:middle; margin-right:4px; }
+  table { border-collapse:collapse; width:100%; font-size:12px; }
+  th { text-align:left; color:var(--dim); font-weight:600; border-bottom:1px solid var(--line); padding:3px 6px; }
+  td { padding:3px 6px; border-bottom:1px solid #f0f0f0; }
+  td.state span { display:inline-block; width:10px; height:10px; border:1px solid var(--ink); vertical-align:-1px; }
+  td.state span.on { background:var(--ink); }
+  tr.fired td { background:#fff4e6; }
+  dl { display:grid; grid-template-columns: max-content 1fr; gap:2px 14px; margin:0; font-size:12px; }
+  dt { font-weight:600; }
+  dd { margin:0; color:#444; }
+  pre { background:#f6f6f4; padding:8px; font-size:12px; overflow:auto; }
+</style>
+</head>
+<body>
+<header>
+  <h1>bio-cpu</h1>
+  <p>A computer architecture modelled on gene regulation. DNA is read-only program memory, protein counts are working memory, and every gene runs in parallel each tick with no program counter.</p>
+</header>
+<main>
+  <div style="display:grid; gap:20px; align-content:start">
+    <section>
+      <h2>Program</h2>
+      <div class="row">
+        <select id="examples" aria-label="Example programs"></select>
+        <button id="load">Load program</button>
+      </div>
+      <textarea id="src" spellcheck="false" aria-label="Program source"></textarea>
+      <div id="msg"></div>
+    </section>
+    <section>
+      <h2>How it maps to a computer</h2>
+      <dl>
+        <dt>Genes</dt><dd>Program memory (ROM). The running cell can read genes but never rewrite them.</dd>
+        <dt>Protein types</dt><dd>Memory addresses.</dd>
+        <dt>Protein counts</dt><dd>The values stored at those addresses (RAM).</dd>
+        <dt>if A &lt; 10</dt><dd>A conditional: the gene only runs while the threshold holds.</dd>
+        <dt>Each tick</dt><dd>Every gene reads the same snapshot and may fire at random. Its output is added, never overwritten, so parallel genes can't race.</dd>
+        <dt>Decay</dt><dd>Each molecule can be lost each tick, so values fade unless a gene keeps writing them.</dd>
+        <dt>Pulses</dt><dd>Input from outside the cell.</dd>
+      </dl>
+      <details>
+        <summary>Language reference</summary>
+<pre>protein NAME [init N] [decay P]
+gene NAME makes PROTEIN [AMOUNT] rate R [if COND and COND ...]
+    R = probability per tick (0.5) or linked to a protein (0.02*S)
+    COND = PROTEIN &lt; N   or   PROTEIN &gt; N
+pulse PROTEIN AMOUNT at TICK
+# comments</pre>
+      </details>
+    </section>
+  </div>
+
+  <div style="display:grid; gap:20px; align-content:start">
+    <section>
+      <h2>Run</h2>
+      <div class="row">
+        <button id="run">Run</button>
+        <button id="step">Step</button>
+        <button id="reset">Reset</button>
+        <label>Seed <input id="seed" type="number" value="1"></label>
+        <label>Speed <input id="speed" type="range" min="1" max="20" value="6"></label>
+        <span id="tick"></span>
+      </div>
+    </section>
+    <section>
+      <h2>Protein counts over time</h2>
+      <canvas id="chart" width="760" height="300"></canvas>
+      <div id="legend"></div>
+    </section>
+    <section>
+      <h2>Genes</h2>
+      <table>
+        <thead><tr><th>On</th><th>Gene</th><th>Makes</th><th>Rate now</th><th>Condition</th><th>Fired</th></tr></thead>
+        <tbody id="genes"></tbody>
+      </table>
+    </section>
+  </div>
+</main>
+
+<script src="biocpu.js"></script>
+<script src="examples.js"></script>
+<script>
+(function () {
+  const $ = (id) => document.getElementById(id);
+  const COLORS = ['#1c7ed6', '#e8590c', '#2b8a3e', '#ae3ec9', '#f59f00', '#0ca678', '#e64980', '#5f3dc4', '#868e96', '#d9480f'];
+  const WINDOW = 600; // ticks shown on the chart
+  let cell = null;
+  let series = [];
+  let timer = null;
+
+  for (const name of Object.keys(BIO_EXAMPLES)) {
+    const o = document.createElement('option'); o.textContent = name; $('examples').appendChild(o);
+  }
+
+  function load() {
+    stop();
+    try {
+      cell = new BioCPU.Cell($('src').value, Number($('seed').value) || 1);
+      msg(`${cell.program.genes.length} genes, ${cell.names.length} proteins, ${cell.program.pulses.length} pulses.`);
+    } catch (e) {
+      cell = null;
+      msg(e.message, true);
+    }
+    series = cell ? cell.names.map(() => []) : [];
+    record();
+    buildGenes();
+    render();
+  }
+
+  function msg(t, err) { $('msg').textContent = t; $('msg').className = err ? 'err' : ''; }
+
+  function record() {
+    if (!cell) return;
+    cell.counts.forEach((v, i) => { series[i].push(v); if (series[i].length > WINDOW) series[i].shift(); });
+  }
+
+  function buildGenes() {
+    $('genes').innerHTML = cell ? cell.program.genes.map((g, i) => {
+      const cond = g.conds.length ? g.conds.map((c) => `${c.protein} ${c.op} ${c.value}`).join(' and ') : 'always';
+      return `<tr id="g${i}"><td class="state"><span></span></td><td>${g.name}</td><td>${g.amount} ${g.product}</td><td class="rate"></td><td>${cond}</td><td class="n">0</td></tr>`;
+    }).join('') : '';
+  }
+
+  function step() {
+    if (!cell) return;
+    cell.step();
+    record();
+  }
+
+  function render() {
+    drawChart();
+    if (!cell) { $('tick').textContent = ''; return; }
+    $('tick').textContent = 'tick ' + cell.tick;
+    cell.program.genes.forEach((g, i) => {
+      const row = $('g' + i);
+      row.querySelector('.state span').classList.toggle('on', cell.active(g));
+      row.querySelector('.rate').textContent = cell.rateOf(g).toFixed(2);
+      row.querySelector('.n').textContent = cell.fireTotals[i];
+      row.classList.toggle('fired', cell.fired[i]);
+    });
+  }
+
+  function drawChart() {
+    const c = $('chart'), ctx = c.getContext('2d');
+    const W = c.width, H = c.height, L = 40, B = 22;
+    ctx.clearRect(0, 0, W, H);
+    ctx.strokeStyle = '#ccc';
+    ctx.strokeRect(L + 0.5, 0.5, W - L - 1, H - B);
+    if (!cell) return;
+    const max = Math.max(10, ...series.flat());
+    const n = series[0] ? series[0].length : 0;
+    const offset = cell.tick - n + 1;
+    const sx = (i) => L + (i / (WINDOW - 1)) * (W - L - 2);
+    const sy = (v) => (H - B) - (v / max) * (H - B - 6);
+    ctx.fillStyle = '#999'; ctx.font = '11px monospace';
+    ctx.fillText(String(Math.round(max)), 4, 12);
+    ctx.fillText('0', 4, H - B);
+    ctx.fillText('tick ' + Math.max(0, offset), L + 2, H - 6);
+    ctx.fillText('tick ' + cell.tick, W - 80, H - 6);
+    // pulse markers
+    ctx.strokeStyle = '#ddd'; ctx.setLineDash([4, 4]);
+    for (const p of cell.program.pulses) {
+      const i = p.tick - offset;
+      if (i >= 0 && i < n) { ctx.beginPath(); ctx.moveTo(sx(i), 0); ctx.lineTo(sx(i), H - B); ctx.stroke(); ctx.fillText(p.protein, sx(i) + 3, 12); }
+    }
+    ctx.setLineDash([]);
+    // only chart the first 10 proteins to stay readable
+    series.slice(0, COLORS.length).forEach((s, k) => {
+      ctx.strokeStyle = COLORS[k]; ctx.lineWidth = 1.6;
+      ctx.beginPath();
+      s.forEach((v, i) => (i ? ctx.lineTo(sx(i), sy(v)) : ctx.moveTo(sx(i), sy(v))));
+      ctx.stroke();
+    });
+    ctx.lineWidth = 1;
+    $('legend').innerHTML = cell.names.slice(0, COLORS.length).map((nm, k) =>
+      `<span><i style="background:${COLORS[k]}"></i>${nm} ${cell.counts[k]}</span>`).join('') +
+      (cell.names.length > COLORS.length ? `<span>+${cell.names.length - COLORS.length} more not charted</span>` : '');
+  }
+
+  function run() {
+    if (timer) { stop(); return; }
+    if (!cell) return;
+    $('run').textContent = 'Pause';
+    const loop = () => {
+      const k = Number($('speed').value);
+      for (let i = 0; i < k; i++) step();
+      render();
+      timer = setTimeout(loop, 33);
+    };
+    loop();
+  }
+  function stop() { clearTimeout(timer); timer = null; $('run').textContent = 'Run'; }
+
+  $('examples').onchange = (e) => { $('src').value = BIO_EXAMPLES[e.target.value]; load(); };
+  $('load').onclick = load;
+  $('reset').onclick = load;
+  $('seed').onchange = load;
+  $('run').onclick = run;
+  $('step').onclick = () => { stop(); step(); render(); };
+
+  $('src').value = BIO_EXAMPLES[Object.keys(BIO_EXAMPLES)[0]];
+  load();
+})();
+</script>
+</body>
+</html>
