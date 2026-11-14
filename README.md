@@ -2,7 +2,7 @@
 
 A computer architecture modelled on gene regulation, with a simulator that runs in the browser. Programs are written as genes. Protein counts act as memory, and every gene runs in parallel each tick, at random, with no program counter.
 
-**Live demo:** `https://<your-username>.github.io/bio-cpu/`
+**Live demo:** `https://LocustSwarm52.github.io/bio-cpu/`
 
 ## The idea
 
